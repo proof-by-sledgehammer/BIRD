@@ -1,8 +1,8 @@
 # Requirements
 
-OCaml version 4.12.0
-Coq version 8.13.1
-coq-bits version 1.1.0
+- OCaml version 4.12.0
+- Coq version 8.13.1
+- coq-bits version 1.1.0
 
 # Building
 
