@@ -1,0 +1,13 @@
+-R ./ BIRD
+-arg "-w all"
+
+Bits.v
+Util.v
+GenericSyntax.v
+GenericSemantics.v
+X86Syntax.v
+X86Semantics.v
+EarlyBirdSyntax.v
+EarlyBirdSemantics.v
+Reg2Var.v
+Extraction.v
