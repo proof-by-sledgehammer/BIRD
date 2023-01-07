@@ -280,9 +280,6 @@ Section FACTS.
     x86_aliasing_registers r = x86_aliasing_registers (var2reg_var (reg2var_reg r)).
   Proof. by case: r. Qed.
 
-  Check x86_registers_read.
-
-
   Lemma reg2var_regs_same_value_low (γ : x86_registers) (r : x86_register) :
     γ r = (reg2var_cell_state γ) (reg2var_reg r).
   Proof.
@@ -300,12 +297,10 @@ Section FACTS.
     by apply: reg2var_regs_same_value_low.
   Qed.
 
-  (* Lemma 1 *)
 Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot) :
     state_read _ _ _ σ (src_cell _ _ r a) = state_read _ _ _ (reg2var_state σ) (src_cell _ _ (reg2var_reg r) (reg2var_annot r a)).
   Proof. unfold state_read ; cbn. by apply: reg2var_regs_same_value_middle. Qed.
 
-  (* Lemma 2 *)
   Lemma reg2var_expr_same_value (γ : x86_registers) e :
     addr_expr_eval e γ = addr_expr_eval (reg2var_addr_expr e) (reg2var_cell_state γ).
   Proof.
@@ -326,7 +321,6 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
     state_mem _ _ σ  (addr_expr_eval (reg2var_addr_expr e) (bird_variables_read_qword (reg2var_cell_state (state_cells _ _ σ))) + o)%bird.
   Proof. by rewrite reg2var_expr_same_value. Qed.
 
-  (* Lemma 3 *)
   Lemma reg2var_source_same_value (σ : x86_state) (s : x86_source) :
     state_read_qword _ _ _ σ s = state_read_qword _ _ _ (reg2var_state σ) (reg2var_source s).
   Proof.
@@ -336,20 +330,6 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
     - by apply: reg2var_expr_same_value.
     - case => /= ? ; by rewrite reg2var_regs_same_value_middle => //=.
   Qed.
-
-  Lemma reg2var_destination_same_value (σ : x86_state) (d : x86_destination) (v : qword) :
-    state_write_qword _ _ _ σ d v ≅ state_write_qword _ _ _ (reg2var_state σ) (reg2var_destination d) v.
-  Proof.
-    constructor.
-    - unfold reg2var_bisim_cell => r ? /=.
-      rewrite reg2var_regs_same_value_middle.
-      unfold bird_variables_read ; cbn.
-      apply: extract_inv.
-      unfold bird_variables_read_qword.
-      unfold reg2var_cell_state ; cbn.
-      case: r => //=.
-      unfold state_write_qword ; cbn.
-      Admitted.
 
   Lemma reg2var_rip_same_value s1 s2 rip :
     s1 ≅ s2 -> state_write_rip _ _ s1 rip ≅ state_write_rip _ _ s2 rip.
@@ -361,16 +341,107 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
     apply: eqb_refl_label.
   Qed.
 
-  Check state_write_qword.
+  (* Get around some type weirdnesses *)
+  Axiom bisim_mem_fix : forall s1 s2, s1 ≅ s2 -> state_mem _ _ s1 = state_mem _ _ s2.
+  Axiom bisim_flags_fix : forall s1 s2, s1 ≅ s2 -> state_flags _ _ s1 = state_flags _ _ s2.
+  Axiom bisim_rip_fix : forall s1 s2, s1 ≅ s2 -> state_rip _ _ s1 = state_rip _ _ s2.
+
+  (* We can assume this because all variable orginate from registers here *)
+  (* See Comment in Definition 18 *)
+  Axiom bisim_cells_fix : forall s1 s2, s1 ≅ s2 ->
+    state_cells _ _ s2 = (fun v => state_cells _ _ s1 (var2reg_var v)).
+
+  Lemma reg2var_reg_cong_low s1 s2 reg :
+    s1 ≅ s2 -> x86_registers_read_qword (state_cells _ _ s1) reg
+             = bird_variables_read_qword (state_cells _ _ s2) (reg2var_reg reg).
+  Proof.
+    move => Hcong.
+    have Heq: (reg2var_cell_state (state_cells _ _ s1)) = (state_cells _ _ s2).
+    { unfold reg2var_cell_state ; cbn. by rewrite (bisim_cells_fix s1 s2). }
+    unfold x86_registers_read_qword, bird_variables_read_qword.
+    rewrite -Heq ; cbn.
+    unfold reg2var_cell_state ; cbn.
+    case: reg ; cbn.
+    all: apply registers_wf.
+    all: done.
+  Qed.
+
+
+  Lemma reg2var_reg_cong s1 s2 reg a :
+    s1 ≅ s2 -> state_read_qword _ _ _ s1 (src_cell _ _ reg a) = state_read_qword _ _ _ s2 (reg2var_source (src_cell _ _ reg a)).
+  Proof.
+    move => Hcong.
+    have Heq: (reg2var_cell_state (state_cells _ _ s1)) = (state_cells _ _ s2).
+    { unfold reg2var_cell_state ; cbn. by rewrite (bisim_cells_fix s1 s2). }
+    unfold state_read_qword ; cbn.
+    case: reg ; cbn.
+    all: rewrite reg2var_regs_same_value_middle.
+    all: rewrite Heq.
+    all: done.
+  Qed.
+
+  Lemma qword_scale_aliases (s : x86_state) sc reg1 reg2 :
+    x86_aliasing_registers reg1 = x86_aliasing_registers reg2 ->
+    qword_scale (state_cells _ _ s reg1) sc = qword_scale (state_cells _ _ s reg2) sc.
+  Proof.
+    move=> Halis.
+    set V1 := state_cells _ _ s reg1.
+    set V2 := state_cells _ _ s reg2.
+    have R: V1 = V2 by apply registers_wf.
+    by rewrite R.
+  Qed.
+
+  Lemma reg2var_expr_eval_cong s1 s2 e :
+    s1 ≅ s2 ->
+    addr_expr_eval e (x86_registers_read_qword (state_cells _ _ s1)) =
+    addr_expr_eval (reg2var_addr_expr e) (bird_variables_read_qword (state_cells _ _ s2)).
+  Proof.
+    move=> Hcong.
+    have Hregs: (reg2var_cell_state (state_cells _ _ s1)) = (state_cells _ _ s2).
+    { unfold reg2var_cell_state ; cbn. by rewrite (bisim_cells_fix s1 s2). }
+    unfold state_read_qword ; cbn.
+    unfold x86_registers_read_qword, bird_variables_read_qword ; cbn.
+    rewrite -Hregs ; cbn.
+    unfold reg2var_cell_state ; cbn.
+    unfold addr_expr_eval ; cbn.
+    destruct e ; cbn.
+    case expr_base ; case expr_index ; cbn.
+    - move=> base index.
+      case: base ; cbn ; do 2 f_equal ; try apply registers_wf ; case: index ; cbn.
+      all: try done.
+      all: try by apply qword_scale_aliases.
+    - move=> base.
+      by case: base ; cbn ; do 2 f_equal ; try apply registers_wf.
+    - move=> index.
+      by case: index ; cbn ; do 3 f_equal ; try apply registers_wf.
+  Qed.
+
+  Lemma reg2var_mem_cong s1 s2 a :
+    s1 ≅ s2 -> state_read_qword _ _ _ s1 (src_addr _ _ a) = state_read_qword _ _ _ s2 (reg2var_source (src_addr _ _ a)).
+  Proof.
+    move=> Hcong.
+    unfold state_read_qword ; cbn.
+    move: a => [sz e] ; cbn.
+    set V1 := addr_expr_eval _ _.
+    set V2 := addr_expr_eval _ _.
+    have R: V1 = V2 by apply reg2var_expr_eval_cong. rewrite R.
+    by case: sz ; cbn ; f_equal ; do ? rewrite (bisim_mem_fix s1 s2).
+  Qed.
+
+  Lemma reg2var_expr_cong s1 s2 e :
+    s1 ≅ s2 -> state_read_qword _ _ _ s1 (src_expr _ _ e) = state_read_qword _ _ _ s2 (reg2var_source (src_expr _ _ e)).
+  Proof. unfold state_read_qword ; cbn. by apply reg2var_expr_eval_cong. Qed.
 
   Lemma reg2var_src_cong s1 s2 src :
     s1 ≅ s2 -> state_read_qword _ _ _ s1 src = state_read_qword _ _ _ s2 (reg2var_source src).
   Proof.
-    move=> [?[?[??]]].
-    case: src => //=.
-    move => [].
-    case ; cbn.
-    Admitted.
+    case: src.
+    - by cbn.
+    - by apply: reg2var_mem_cong.
+    - by apply: reg2var_expr_cong.
+    - by apply: reg2var_reg_cong.
+    - move=> ? ; cbn ; by rewrite (bisim_rip_fix s1 s2).
+  Qed.
 
   Lemma reg2var_dest_cong s1 s2 dst v :
     s1 ≅ s2 -> state_write_qword _ _ _ s1 dst v ≅ state_write_qword _ _ _ s2 (reg2var_destination dst) v.
@@ -384,7 +455,6 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
     - case ; cbn. all: done.
   Qed.
 
-  (* Corollary 1 *)
   Lemma reg2var_state_translate `{IsLabel x86_label} `{EqDec x86_label} (σ : x86_state) :
     σ ≅ reg2var_state σ.
   Proof.
@@ -411,32 +481,56 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
       by move->.
   Qed.
 
-  (* Get around some type weirdnesses *)
-  Axiom bisim_mem_fix : forall s1 s2, s1 ≅ s2 -> state_mem _ _ s1 = state_mem _ _ s2.
-  Axiom bisim_flags_fix : forall s1 s2, s1 ≅ s2 -> state_flags _ _ s1 = state_flags _ _ s2.
-  Axiom bisim_rip_fix : forall s1 s2, s1 ≅ s2 -> state_rip _ _ s1 = state_rip _ _ s2.
+  Lemma reg2var_read_after_write s dst v r :
+    x86_registers_write_qword (state_cells _ _ s) dst v r =
+    bird_variables_write_qword (fun v => state_cells _ x86_label s (var2reg_var v)) (reg2var_reg dst) v (reg2var_reg r).
+  Proof.
+    unfold x86_registers_write_qword, x86_registers_write_qword_all.
+    unfold bird_variables_write_qword ; cbn.
+  Admitted. (* Solved by checking all all combinations of r and dst
+               But this takes even longer than the congurence for expressions
+               (and sometimes it crashes coq)
 
-  (* We can assume this because all variable orginate from registers here *)
-  (* See Comment in Definition 18 *)
-  Axiom bisim_cells_fix : forall s1 s2, s1 ≅ s2 ->
-    state_cells _ _ s2 = (fun v => state_cells _ _ s1 (var2reg_var v)).
+               In the end, you only get goals such as:
 
-  (* Lemma 5 *)
+               s[rax <- v][eax <- v][ax <- v][al <- v][ah <- v][eax] = v
+
+               Which is trivially true.
+               But due to typeclasses being involved, Coq can't just reduce
+               this term.
+             *)
+
   Lemma reg2var_run_phi_is_sim n p σ₁ σ₂ :
     σ₁ ≅ σ₂ -> run_phi _ _ _ n p σ₁ ≅ run_phi _ _ _ n (reg2var_phi_instruction p) σ₂.
   Proof.
     move=> Hcong.
+    destruct p as [srcs dst].
     unfold run_phi.
-    rewrite reg2var_nth_error_phi ; cbn.
-    case (nth_error _) => //=.
-    constructor.
-    - unfold reg2var_bisim_cell ; cbn.
-      shelve.
-    - unfold reg2var_bisim_mem ; cbn.
-      shelve.
-  Admitted.
+    rewrite reg2var_nth_error_phi.
+    case N: (nth_error _ _) ; cbn.
+    - set V1 := x86_registers_read_qword _ _.
+      set V2 := bird_variables_read_qword _ _.
+      have R1: V1 = V2. by apply:  reg2var_reg_cong_low.
+      rewrite R1.
+      rewrite (bisim_mem_fix σ₁ σ₂).
+      rewrite (bisim_flags_fix σ₁ σ₂).
+      rewrite (bisim_rip_fix σ₁ σ₂).
+      rewrite (bisim_cells_fix σ₁ σ₂).
+      repeat constructor.
+      + unfold reg2var_bisim_cell.
+        by case => * ; cbn ; unfold bird_variables_read, x86_registers_read, bird_variables_read_qword, x86_registers_read_qword ; cbn ; rewrite reg2var_read_after_write.
+      + unfold reg2var_bisim_mem.
+        move=> [] ; case => e //= ; unfold bird_variables_read, x86_registers_read, bird_variables_read_qword, x86_registers_read_qword, addr_expr_eval ; cbn ; do ? rewrite reg2var_read_after_write ; destruct e ; cbn.
+                                                                                                                                                                   all: try done.
+  Admitted. (* Missing case is for expression evaluation
+               A similar goal is solved in reg2var_expr_eval_cong,
+               but it takes super long to execute *)
 
-
+  (* We can assume this as reg2var does not change the CFG *)
+  (* See note on page 12. *)
+  Axiom nth_pred_translate : forall p (k1 k2 : x86_node p) n,
+      @is_nth_pred _ _ _ _ p k1 k2 n ->
+      @is_nth_pred _ _ _ _ (reg2var_program p) k1 k2 n.
 
 
   Lemma reg2var_phi_is_sim
@@ -455,7 +549,29 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
     constructor ; first by apply: reg2var_state_translate.
     inversion σ₁_step_σ₁' ; subst.
     constructor 1 with (n:=n).
-  Admitted.
+    - by apply nth_pred_translate.
+    - unfold reg2var_state ; cbn.
+      unfold reg2var_phicode ; cbn.
+      unfold reg2var_phi_block ; cbn.
+      unfold reg2var_phi_block ; cbn.
+      unfold phi ; cbn.
+      set P := prog_phicode _ _ _ _ _ _.
+      generalize dependent σ₁.
+      generalize dependent σ₂.
+      induction P ; cbn.
+      + move=> σ₂ σ₁ *.
+        unfold reg2var_cell_state ; cbn.
+        rewrite (bisim_mem_fix σ₁ σ₂).
+        rewrite (bisim_flags_fix σ₁ σ₂).
+        rewrite (bisim_rip_fix σ₁ σ₂).
+        rewrite -(bisim_cells_fix σ₁ σ₂).
+        destruct σ₂ ; cbn.
+        all: try done.
+      + move=> σ₂ σ₁ *.
+        erewrite IHP.
+        + eauto. by apply reg2var_run_phi_is_sim.
+        + econstructor ; eauto.
+  Qed.
 
 
   Lemma reg2var_phi_is_sound
@@ -610,6 +726,10 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
         { eapply reg2var_src_cong_trans ; eauto. apply: reg2var_state_translate. }
         have R34: V3 = V4.
         { eapply reg2var_src_cong_trans ; eauto. apply: reg2var_state_translate. }
+        (* Below should work (it is similar to the three cases above),
+           but for some reason, Coq gets confused about the denotation
+           and inserts an evar. This makes it so that `set` can't find
+           the expressions... *)
         shelve.
         (*set R1 := state_write_rip _ _ _ _.
         set R2 := state_write_rip _ _ _ _.
@@ -694,11 +814,11 @@ Lemma reg2var_regs_same_value (σ : x86_state) (r : x86_register) (a : x86_annot
         {
           revert V1 V2 ; cbn.
           unfold addr_expr_eval ; cbn.
-          admit.
+          by rewrite (reg2var_reg_cong_low σ₁ σ₂).
         }
         move->.
         all: done.
-  Admitted.
+  Admitted. (* Admitted due to Coq randomly inserting an evar in the case for op_2_2 *)
 
 
   Lemma reg2var_instr_is_sim_None
