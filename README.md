@@ -1,7 +1,6 @@
 # BIRD
 
-This is a temporary repository with the Coq code correspoding to the paper
-"BIRD: A Binary IR for formally verified Decompilation".
+This is the Coq code correspoding to the paper "BIRD: A Binary IR for formally verified Decompilation".
 
 This code mirrors the paper as follows:
 - Utility functionality as described at the start of section 3 is in `Bits.v` and `Util.v`
